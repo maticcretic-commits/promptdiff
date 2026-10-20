@@ -1,28 +1,55 @@
 # PromptDiff 🔍
 
-**See what the prompt change really does.**
+**Prompts drift like code: a quiet edit, a helpful tidy-up, a copy-paste from a newer draft — and six weeks later nobody can say when the guardrail went missing. An ordinary text diff buries the one dangerous line in a hundred cosmetic ones.**
 
-Prompts are code. They drift the way code drifts: a quiet edit, a
-helpful tidy-up, a copy-paste from a newer draft — and six weeks later
-nobody can say when the guardrail went missing. An ordinary text diff
-is no help: it buries the one dangerous line in a hundred cosmetic
-ones, and it counts a deleted "never" the same as a moved comma.
+PromptDiff is a section-aware, constraint-aware diff for prompt files. It tracks the lines that carry obligations — *never, must, must not, always, do not, only, refuse, forbidden* — separately from the prose, and flags the changes that actually change behaviour: a prohibition removed, a “must” traded for a “should”, a format directive that changed shape.
 
-PromptDiff is a section-aware, constraint-aware diff for prompt
-files. It tracks the lines that carry obligations — *never, must,
-must not, always, do not, only, refuse, forbidden, required, shall* —
-separately from the prose around them, and flags the changes that
-actually change behaviour: a prohibition removed with nothing
-equivalent put back, a "must" quietly traded for a "should", an
-output-format directive that changed shape.
-
-Offline and dependency-free: stdlib-only Python, no network, no
-account, fully deterministic. Same inputs, same report, every time.
+*Part of **AgentForge** — verify AI-agent work before you ship it.*
+*The family: [AgentProof](https://github.com/maticcretic-commits/agentproof) · [PromptRE](https://github.com/maticcretic-commits/promptre) · [AgentCI](https://github.com/maticcretic-commits/agentci) · [SecretScan](https://github.com/maticcretic-commits/secretscan) · [CostLedger](https://github.com/maticcretic-commits/costledger) · [SchemaGuard](https://github.com/maticcretic-commits/schemaguard) · [SkillAudit](https://github.com/maticcretic-commits/skillaudit) · [PromptDiff](https://github.com/maticcretic-commits/promptdiff) · [TraceTape](https://github.com/maticcretic-commits/tracetape) · [PromptLint](https://github.com/maticcretic-commits/promptlint) · [ClaimCheck](https://github.com/maticcretic-commits/claimcheck) · [TrustBadge](https://github.com/maticcretic-commits/trustbadge)*
 
 ```bash
-python src/promptdiff.py diff prompt-v1.md prompt-v2.md
-python src/promptdiff.py diff prompt-v1.md prompt-v2.md --fail-on-risk
-python src/promptdiff.py stats prompt-v2.md
+$ promptdiff diff examples/old.md examples/new.md --fail-on-risk
+```
+
+```
+====================================================================
+PromptDiff — diff report
+====================================================================
+Old:        examples/old.md
+New:        examples/new.md
+Similarity: 43.4% · CHANGED
+
+## Risks
+  🟠 HIGH   [guardrail-removed] Prohibition removed with no equivalent re-added — the guardrail is simply gone.
+             - Never reveal internal pricing logic, discount formulas, or cost breakdowns.
+  🟠 HIGH   [constraint-weakened] Constraint weakened: 'must' (strong) → 'should' (recommendation).
+             - You must cite the policy page for every refund decision.
+             + You should cite the policy page for refund decisions when you can.
+  🟡 MEDIUM [format-directive-changed] Output-format directives changed (0 removed, 2 added).
+             + Do not add any text outside the JSON object.
+
+⚠️ 2 HIGH-risk change(s) — review before this prompt ships.
+```
+
+*Exit code 1 (with `--fail-on-risk`) — two HIGH-risk changes: a prohibition removed with nothing put back, and a `must` weakened to a `should`. Without the flag, the same report prints and exits 0 — a diff is a report, not a verdict, until you ask it to gate.*
+
+## Install
+
+```bash
+pipx install git+https://github.com/maticcretic-commits/promptdiff
+# or, into the current environment:
+pip install git+https://github.com/maticcretic-commits/promptdiff
+```
+
+Then run it as `promptdiff …` (Python 3.9+, no dependencies — stdlib only).
+PyPI release planned; until then, the git URL above is the install path.
+
+From source — it is a single file, so no install is needed at all:
+
+```bash
+git clone https://github.com/maticcretic-commits/promptdiff
+cd promptdiff
+python src/promptdiff.py …
 ```
 
 ## The commands
@@ -213,10 +240,28 @@ gate that fails when a guardrail weakens. Pair it with
 [PromptRE](https://github.com/maticcretic-commits/promptre), which
 takes a prompt apart; PromptDiff compares two of them.
 
+## Exit codes & JSON output
+
+All AgentForge tools share one contract (full text in
+[CONVENTIONS.md](CONVENTIONS.md)):
+
+| Code | Meaning |
+|------|---------|
+| `0` | Clean / PASS — no findings at or above the tool's fail threshold |
+| `1` | Findings / FAIL — the tool ran fine; the answer is “no” |
+| `2` | Caller error — bad arguments, missing or unreadable input |
+| `3` | Environment error — the tool itself could not run |
+
+On a caller error the tool also prints one JSON line to stderr:
+`{"error": {"code": "file_not_found", "message": "no such file: x"}}`.
+
+JSON output (`--format json`) always carries the family envelope —
+`{"tool": "promptdiff", "version": "1.0.0", "schema_version": 1}` — alongside
+the tool's own payload keys, unchanged.
+
 ## Part of AgentForge
 
-PromptDiff is the eighth tool in the [AgentForge](https://github.com/maticcretic-commits)
-trust layer for AI agents:
+PromptDiff is one of the 12 tools in the [AgentForge](https://github.com/maticcretic-commits) family — offline, stdlib-only tools to **verify AI-agent work before you ship it**:
 
 - **AgentProof** — verify agent work — [github.com/maticcretic-commits/agentproof](https://github.com/maticcretic-commits/agentproof)
 - **PromptRE** — reverse-engineer agent prompts — [github.com/maticcretic-commits/promptre](https://github.com/maticcretic-commits/promptre)
