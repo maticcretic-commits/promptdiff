@@ -442,3 +442,72 @@ def test_risks_carry_tier():
         assert risk["tier"] == ("HIGH" if risk["severity"] == "high"
                                 else "INFO")
     assert any(r["tier"] == "HIGH" for r in data["risks"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: SARIF output + stdin inputs
+# ---------------------------------------------------------------------------
+
+EXAMPLES_PD = Path(__file__).parent.parent / "examples"
+
+
+def assert_sarif_shape(doc, tool_name):
+    """SARIF 2.1.0 top-level required fields (structure assertion)."""
+    assert doc["version"] == "2.1.0"
+    assert doc["$schema"].endswith("sarif-2.1.0.json")
+    assert len(doc["runs"]) == 1
+    run = doc["runs"][0]
+    driver = run["tool"]["driver"]
+    assert driver["name"] == tool_name
+    assert driver["version"]
+    assert driver["informationUri"].startswith(
+        "https://github.com/maticcretic-commits/")
+    rule_ids = {r["id"] for r in driver["rules"]}
+    for res in run["results"]:
+        assert res["ruleId"] in rule_ids
+        assert res["level"] in ("error", "warning", "note", "none")
+        assert res["message"]["text"]
+    return run
+
+
+def test_sarif_diff_examples():
+    js = run_cli("diff", str(EXAMPLES_PD / "old.md"),
+                 str(EXAMPLES_PD / "new.md"), "--format", "json")
+    n_risks = len(json.loads(js.stdout)["risks"])
+    proc = run_cli("diff", str(EXAMPLES_PD / "old.md"),
+                   str(EXAMPLES_PD / "new.md"), "--format", "sarif",
+                   "--fail-on-risk")
+    assert proc.returncode == 1  # same verdict as text/json
+    run = assert_sarif_shape(json.loads(proc.stdout), "promptdiff")
+    assert len(run["results"]) == n_risks
+    errors = [r for r in run["results"] if r["level"] == "error"]
+    assert errors  # HIGH risks map to error
+    assert {r["ruleId"] for r in errors} <= {
+        "guardrail-removed", "constraint-weakened"}
+
+
+def test_diff_stdin_one_side():
+    new_text = (EXAMPLES_PD / "new.md").read_text()
+    proc = subprocess.run(
+        [sys.executable, str(CLI), "diff",
+         str(EXAMPLES_PD / "old.md"), "-", "--format", "json"],
+        input=new_text, capture_output=True, text=True)
+    assert proc.returncode == 0
+    data = json.loads(proc.stdout)  # stdout is pure JSON
+    assert data["new"] == "<stdin>"
+    assert data["high_risks"] >= 1
+    both = subprocess.run(
+        [sys.executable, str(CLI), "diff", "-", "-"],
+        input="x", capture_output=True, text=True)
+    assert both.returncode == 2  # stdin can only be read once
+
+
+def test_stats_stdin():
+    proc = subprocess.run(
+        [sys.executable, str(CLI), "stats", "-", "--format", "json"],
+        input=(EXAMPLES_PD / "old.md").read_text(),
+        capture_output=True, text=True)
+    assert proc.returncode == 0
+    data = json.loads(proc.stdout)
+    assert data["file"] == "<stdin>"
+    assert data["chars"] > 0
