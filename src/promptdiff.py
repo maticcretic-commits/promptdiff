@@ -589,7 +589,13 @@ def compute_diff(old_text, new_text, old_name="(old)", new_name="(new)"):
 
     sim = similarity(old_text, new_text)
     return {
-        "tool": "promptdiff", "version": VERSION,
+        "tool": "promptdiff", "version": VERSION, "schema_version": 1,
+        "findings_summary": {
+            "count": len(risks),
+            "highest_severity": (
+                "HIGH" if any(r["severity"] == "high" for r in risks)
+                else "INFO" if risks else "NONE"),
+        },
         "old": old_name, "new": new_name,
         "identical": normalize_text(old_text) == normalize_text(new_text),
         "similarity": round(sim, 4),
@@ -807,12 +813,20 @@ def _read(path):
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _print_error(e):
+    print(f"error: {e}", file=sys.stderr)
+    code = "file_not_found" if isinstance(e, FileNotFoundError) \
+        else "read_error"
+    print(json.dumps({"error": {"code": code, "message": str(e)}}),
+          file=sys.stderr)
+
+
 def cmd_diff(args):
     try:
         old_text = _read(args.old)
         new_text = _read(args.new)
     except OSError as e:
-        print(f"error: {e}", file=sys.stderr)
+        _print_error(e)
         return 2
     r = compute_diff(old_text, new_text, args.old, args.new)
     if args.format == "json":
@@ -828,11 +842,12 @@ def cmd_stats(args):
     try:
         text = _read(args.file)
     except OSError as e:
-        print(f"error: {e}", file=sys.stderr)
+        _print_error(e)
         return 2
     p = profile(text)
     if args.format == "json":
         print(json.dumps({"tool": "promptdiff", "version": VERSION,
+                          "schema_version": 1,
                           "file": args.file, **p},
                          indent=2, ensure_ascii=False))
     else:
@@ -861,6 +876,11 @@ def main(argv=None):
         prog="promptdiff",
         description="Section-aware, constraint-aware diff for prompt "
                     "files. See what the prompt change really does.")
+    ap.add_argument("--version", action="version",
+                    version=f"promptdiff {VERSION}")
+    ap.add_argument("--no-color", action="store_true",
+                    help="disable ANSI color output (this tool emits "
+                         "no color; accepted harmlessly)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("diff", help="diff two prompt files")
