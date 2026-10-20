@@ -582,6 +582,10 @@ def compute_diff(old_text, new_text, old_name="(old)", new_name="(new)"):
 
     risks = build_risks(pairs, removed_only, old_text, new_text,
                         old_profile, new_profile)
+    for r in risks:
+        # Family severity tier alongside the native label
+        # (CONVENTIONS.md): high -> HIGH, medium/low -> INFO.
+        r["tier"] = "HIGH" if r["severity"] == "high" else "INFO"
 
     def delta(key):
         return {"old": old_profile[key], "new": new_profile[key],
