@@ -374,3 +374,56 @@ def test_examples_pair_flags_both_high_risks():
     assert "constraint-weakened" in checks
     assert "format-directive-changed" in checks
     assert data["high_risks"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: envelope / flags / error envelope
+# ---------------------------------------------------------------------------
+
+def test_diff_json_envelope_and_findings_summary():
+    res = run_cli("diff", str(EXAMPLES / "old.md"),
+                  str(EXAMPLES / "new.md"), "--format", "json")
+    assert res.returncode == 0
+    data = json.loads(res.stdout)
+    assert data["schema_version"] == 1
+    assert isinstance(data["schema_version"], int)
+    assert data["findings_summary"]["count"] == len(data["risks"])
+
+
+def test_diff_removed_guardrail_highest_severity_high(tmp_path):
+    new_text = BASE.replace("- Never share the internal roadmap.\n", "")
+    a = write(tmp_path, "a.md", BASE)
+    b = write(tmp_path, "b.md", new_text)
+    res = run_cli("diff", a, b, "--format", "json")
+    assert res.returncode == 0
+    data = json.loads(res.stdout)
+    assert data["schema_version"] == 1
+    assert data["findings_summary"]["count"] == len(data["risks"])
+    assert data["findings_summary"]["highest_severity"] == "HIGH"
+
+
+def test_stats_json_envelope_no_findings_summary(tmp_path):
+    a = write(tmp_path, "a.md", BASE)
+    res = run_cli("stats", a, "--format", "json")
+    assert res.returncode == 0
+    data = json.loads(res.stdout)
+    assert data["schema_version"] == 1
+    assert isinstance(data["schema_version"], int)
+    assert "findings_summary" not in data
+
+
+def test_version_flag():
+    res = run_cli("--version")
+    assert res.returncode == 0
+    assert res.stdout.strip() == "promptdiff 1.0.0"
+
+
+def test_diff_missing_file_error_envelope(tmp_path):
+    res = run_cli("diff", str(tmp_path / "nope.md"),
+                  str(tmp_path / "x.md"))
+    assert res.returncode == 2
+    lines = [l for l in res.stderr.strip().splitlines() if l.strip()]
+    assert lines[0].startswith("error: ")
+    envelope = json.loads(lines[-1])
+    assert envelope["error"]["code"] == "file_not_found"
+    assert envelope["error"]["message"] == lines[0][len("error: "):]
