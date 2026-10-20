@@ -817,6 +817,98 @@ def _read(path):
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _read_arg(path):
+    """Read a prompt file, or stdin when path is '-' (pipe
+    composability — CONVENTIONS.md)."""
+    if path == "-":
+        return sys.stdin.read().replace("\r\n", "\n").replace("\r", "\n")
+    return _read(path)
+
+
+def _label(path):
+    return "<stdin>" if path == "-" else path
+
+
+# ---------------------------------------------------------------------------
+# SARIF output (SARIF 2.1.0 — see CONVENTIONS.md)
+# ---------------------------------------------------------------------------
+
+def _sarif_level(tier, severity):
+    """Tier HIGH -> error; native medium -> warning; else note."""
+    if tier == "HIGH":
+        return "error"
+    if severity == "medium":
+        return "warning"
+    return "note"
+
+
+def _sarif_rule_name(rule_id):
+    return "".join(p.capitalize() for p in re.split(
+        r"[^A-Za-z0-9]+", rule_id) if p) or "Finding"
+
+
+def _find_line(text, needle):
+    """1-based line number of the line whose stripped form equals the
+    needle's stripped form, or None."""
+    if not needle:
+        return None
+    want = needle.strip()
+    for i, line in enumerate(text.splitlines(), start=1):
+        if line.strip() == want:
+            return i
+    return None
+
+
+def build_sarif(r, old_text, new_text, old_label, new_label):
+    """Build a SARIF 2.1.0 log from a compute_diff result. A risk is
+    located in the new file when it has a new-side line, else in the
+    old file (a removed guardrail lives there), else unlocated."""
+    rules, seen = [], set()
+    results = []
+    for risk in r["risks"]:
+        level = _sarif_level(risk["tier"], risk["severity"])
+        if risk["check"] not in seen:
+            seen.add(risk["check"])
+            rules.append({
+                "id": risk["check"],
+                "name": _sarif_rule_name(risk["check"]),
+                "shortDescription": {
+                    "text": f"PromptDiff risk: {risk['check']}"},
+                "defaultConfiguration": {"level": level},
+                "properties": {"severity": risk["severity"],
+                               "tier": risk["tier"]},
+            })
+        res = {"ruleId": risk["check"], "level": level,
+               "message": {"text": risk["message"]}}
+        uri = line = None
+        if risk.get("new_line"):
+            uri, line = new_label, _find_line(new_text,
+                                              risk["new_line"])
+        elif risk.get("old_line"):
+            uri, line = old_label, _find_line(old_text,
+                                              risk["old_line"])
+        if uri:
+            loc = {"artifactLocation": {"uri": uri}}
+            if line:
+                loc["region"] = {"startLine": line}
+            res["locations"] = [{"physicalLocation": loc}]
+        results.append(res)
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "promptdiff",
+                "version": VERSION,
+                "informationUri":
+                    "https://github.com/maticcretic-commits/promptdiff",
+                "rules": rules,
+            }},
+            "results": results,
+        }],
+    }
+
+
 def _print_error(e):
     print(f"error: {e}", file=sys.stderr)
     code = "file_not_found" if isinstance(e, FileNotFoundError) \
@@ -826,14 +918,27 @@ def _print_error(e):
 
 
 def cmd_diff(args):
+    if args.old == "-" and args.new == "-":
+        msg = "only one side of a diff may come from stdin"
+        print(f"error: {msg}", file=sys.stderr)
+        print(json.dumps({"error": {"code": "invalid_args",
+                                    "message": msg}}),
+              file=sys.stderr)
+        return 2
     try:
-        old_text = _read(args.old)
-        new_text = _read(args.new)
+        old_text = _read_arg(args.old)
+        new_text = _read_arg(args.new)
     except OSError as e:
         _print_error(e)
         return 2
-    r = compute_diff(old_text, new_text, args.old, args.new)
-    if args.format == "json":
+    r = compute_diff(old_text, new_text, _label(args.old),
+                     _label(args.new))
+    if args.format == "sarif":
+        print(json.dumps(build_sarif(r, old_text, new_text,
+                                     _label(args.old),
+                                     _label(args.new)),
+                         indent=2, ensure_ascii=False))
+    elif args.format == "json":
         print(json.dumps(r, indent=2, ensure_ascii=False))
     else:
         print_diff_text(r)
@@ -844,7 +949,7 @@ def cmd_diff(args):
 
 def cmd_stats(args):
     try:
-        text = _read(args.file)
+        text = _read_arg(args.file)
     except OSError as e:
         _print_error(e)
         return 2
@@ -852,10 +957,10 @@ def cmd_stats(args):
     if args.format == "json":
         print(json.dumps({"tool": "promptdiff", "version": VERSION,
                           "schema_version": 1,
-                          "file": args.file, **p},
+                          "file": _label(args.file), **p},
                          indent=2, ensure_ascii=False))
     else:
-        print_stats_text(p, args.file)
+        print_stats_text(p, _label(args.file))
     return 0
 
 
@@ -888,15 +993,18 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("diff", help="diff two prompt files")
-    d.add_argument("old", help="the old (baseline) prompt file")
+    d.add_argument("old", help="the old (baseline) prompt file "
+                               "('-' reads stdin; one side only)")
     d.add_argument("new", help="the new prompt file")
-    d.add_argument("--format", choices=("text", "json"), default="text")
+    d.add_argument("--format", choices=("text", "json", "sarif"),
+                   default="text")
     d.add_argument("--fail-on-risk", action="store_true",
                    help="exit 1 if any HIGH-risk change is found")
     d.set_defaults(fn=cmd_diff)
 
     s = sub.add_parser("stats", help="profile a single prompt file")
-    s.add_argument("file", help="the prompt file to profile")
+    s.add_argument("file", help="the prompt file to profile "
+                                "('-' reads stdin)")
     s.add_argument("--format", choices=("text", "json"), default="text")
     s.set_defaults(fn=cmd_stats)
 
