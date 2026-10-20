@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promptdiff"
+version = "1.0.0"
+description = "Section-aware, constraint-aware diff for prompt files. See what the prompt change really does."
+requires-python = ">=3.9"
+license = {text = "MIT"}
+
+[project.scripts]
+promptdiff = "promptdiff:main"
+
+[tool.setuptools]
+py-modules = ["promptdiff"]
+package-dir = {"" = "src"}
