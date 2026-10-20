@@ -427,3 +427,18 @@ def test_diff_missing_file_error_envelope(tmp_path):
     envelope = json.loads(lines[-1])
     assert envelope["error"]["code"] == "file_not_found"
     assert envelope["error"]["message"] == lines[0][len("error: "):]
+
+
+# ---------------------------------------------------------------------------
+# Family severity tiers (CONVENTIONS.md)
+# ---------------------------------------------------------------------------
+
+def test_risks_carry_tier():
+    r = run_cli("diff", str(EXAMPLES / "old.md"),
+                str(EXAMPLES / "new.md"), "--format", "json")
+    data = json.loads(r.stdout)
+    assert data["risks"]
+    for risk in data["risks"]:
+        assert risk["tier"] == ("HIGH" if risk["severity"] == "high"
+                                else "INFO")
+    assert any(r["tier"] == "HIGH" for r in data["risks"])
